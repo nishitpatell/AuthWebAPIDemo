@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Text;
 
 namespace AuthWebAPIDemo.Services
@@ -40,7 +41,7 @@ namespace AuthWebAPIDemo.Services
             return user;
         }
 
-        public async Task<string?> Loginasync(UserDto request)
+        public async Task<TokenResponseDto?> Loginasync(UserDto request)
         {
             User? user = await context.WebAPIUsers.FirstOrDefaultAsync(u => u.Username == request.Username);
             if(user == null)
@@ -52,9 +53,11 @@ namespace AuthWebAPIDemo.Services
             {
                 return null;
             }
-
-            string token = CreateToken(user);
-
+            var token = new TokenResponseDto
+            {
+                AccessToken = CreateToken(user),
+                RefreshToken = await GenerateAndSaveRefreshTokenAsync(user)
+            };
             return token;
         }
 
@@ -81,5 +84,33 @@ namespace AuthWebAPIDemo.Services
 
             return new JwtSecurityTokenHandler().WriteToken(tokenDescriptor);
         }
+
+        private async Task<string> GenerateAndSaveRefreshTokenAsync(User user) //refresh token is different from normal token, it's like a key which we'll send with id which will generate new token.
+        {
+            var randomNumber = new byte[32];
+            using var rng = RandomNumberGenerator.Create();
+            rng.GetBytes(randomNumber);
+            var refreshToken = Convert.ToBase64String(randomNumber);
+            user.RefreshToken = refreshToken;
+            user.RefreshTokenExpiry = DateTime.UtcNow.AddDays(1);
+            await context.SaveChangesAsync();
+            return refreshToken;
+        }
+
+        public async Task<TokenResponseDto?> RefreshTokenAsync(RefreshTokenRequestDto request)
+        {
+            var user = await context.WebAPIUsers.FindAsync(request.UserId);
+            if(user is null || user.RefreshToken!= request.RefreshToken || user.RefreshTokenExpiry < DateTime.UtcNow){
+                return null;
+            }
+            var token = new TokenResponseDto
+            {
+                AccessToken = CreateToken(user),
+                RefreshToken = await GenerateAndSaveRefreshTokenAsync(user)
+            };
+
+            return token;
+        }
+
     }
 }
